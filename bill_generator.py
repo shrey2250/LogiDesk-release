@@ -804,11 +804,9 @@ def _fill_embedded_workbook(
     # Rows 2 .. 1 + n_rows: Data rows
     # Row 1 + n_rows + 1: Empty row
     # Row 1 + n_rows + 2: Total row
-    # Row 1 + n_rows + 3: Rupees in Words row
     empty_row_idx = 1 + n_rows + 1
     total_row_idx = 1 + n_rows + 2
-    words_row_idx = 1 + n_rows + 3
-    total_needed_rows = words_row_idx
+    total_needed_rows = total_row_idx
 
     # If ws currently has more rows than total_needed_rows, delete extra rows
     if ws.max_row > total_needed_rows:
@@ -925,8 +923,7 @@ def _fill_embedded_workbook(
 
     amt_col = hm.get("amount", "G")
     cell_tot_amt = ws[f"{amt_col}{total_row_idx}"]
-    sum_formula = f"=SUM({amt_col}{ole_info.first_data_row}:{amt_col}{total_row_idx - 1})"
-    cell_tot_amt.value = sum_formula
+    cell_tot_amt.value = val_to_set
     if Alignment is not None:
         vert = cell_tot_amt.alignment.vertical if cell_tot_amt.alignment else None
         cell_tot_amt.alignment = Alignment(horizontal="center", vertical=vert)
@@ -934,36 +931,16 @@ def _fill_embedded_workbook(
     for c in range(1, max_c + 1):
         cell = ws.cell(row=total_row_idx, column=c)
         if cell.value is not None and str(cell.value).strip() == "[TOTAL]":
-            cell.value = sum_formula
+            cell.value = val_to_set
 
     # Determine active columns from header map
     max_header_idx = max(_col_idx(col_let) for col_let in hm.values()) if hm else 9
     last_col_letter = _col_letter(max_header_idx)
 
-    # Populate Rupees in Words row (Merged across columns A..last_col_letter)
-    words_formula = build_inr_words_formula(f"{amt_col}{total_row_idx}")
-
-    first_cell_border = data_styles.get(1, {}).get("border")
-    for c in range(1, max_c + 1):
-        cell = ws.cell(row=words_row_idx, column=c)
-        if first_cell_border:
-            cell.border = copy_module.copy(first_cell_border)
-        cell.value = None
-
-    cell_words = ws.cell(row=words_row_idx, column=1)
-    cell_words.value = words_formula
-    if Font is not None:
-        cell_words.font = Font(name="Cambria", size=9.5, bold=False)
-    if Alignment is not None:
-        cell_words.alignment = Alignment(horizontal="left", vertical="center", indent=1)
-
-    ws.merge_cells(start_row=words_row_idx, start_column=1, end_row=words_row_idx, end_column=max_header_idx)
-
     # Explicit row heights so Excel OLE server matches Word's exact layout
     ws.row_dimensions[1].height = 17.25
-    for r_idx in range(ole_info.first_data_row, total_row_idx + 1):
+    for r_idx in range(ole_info.first_data_row, total_needed_rows + 1):
         ws.row_dimensions[r_idx].height = 14.5
-    ws.row_dimensions[words_row_idx].height = 16.5
 
     # Clean up any unused/hidden phantom columns beyond last_col_letter (e.g. template column J)
     for c_idx in list(ws.column_dimensions.keys()):
@@ -2132,20 +2109,6 @@ class BillGeneratorService:
         replace_start = heading_idx
         replace_end = (spacing_idx + 1) if spacing_idx is not None else (ole_idx + 1)
 
-        # Remove any static outside Grand Total paragraphs or Amount in Words tables from Word body
-        while replace_end < len(body_children):
-            cand = body_children[replace_end]
-            cand_text = "".join(cand.xpath(".//w:t/text()", namespaces=nsmap)).strip()
-            if (
-                "GRAND TOTAL" in cand_text
-                or "[TOTAL]" in cand_text
-                or "[AMOUNT IN WORDS]" in cand_text
-                or "Rupees" in cand_text
-            ):
-                replace_end += 1
-            else:
-                break
-
         # ── Step 4: Build each route's workbook, preview image, and XML elements ──
         new_route_elements = []
         docx_replacements: Dict[str, bytes] = {}
@@ -2206,7 +2169,7 @@ class BillGeneratorService:
                 # Height & Width calculation: match exact live Excel COM measurements
                 # so the table is created at its full bigger size and stays the same size when clicked
                 route_width_pt = measured_w if (measured_w is not None) else 487.2
-                route_height_pt = measured_h if (measured_h is not None) else (17.25 + (route_total_rows - 2) * 14.5 + 16.5)
+                route_height_pt = measured_h if (measured_h is not None) else (17.25 + (route_total_rows - 1) * 14.5)
                 shape_width_dxa = int(round(route_width_pt * 20))
                 route_dya = int(round(route_height_pt * 20))
 
